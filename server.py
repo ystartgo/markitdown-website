@@ -144,10 +144,57 @@ def convert_document(req: ConvertRequest):
     使用 Webcom 本地原生 Microsoft MarkItDown 進行高速轉檔。
     無須等待 400MB Pyodide WASM 載入，1 秒內完成轉換。
     """
+    md_engine = None
     try:
         from markitdown import MarkItDown
-    except ImportError:
-        raise HTTPException(status_code=500, detail="本地未安裝 markitdown 套件")
+        md_engine = MarkItDown()
+    except Exception as imp_err:
+        # 1. 嘗試向 8001 Webcom Daemon 代理請求
+        try:
+            proxy_url = "http://127.0.0.1:8001/tools/parse_document"
+            req_data = json.dumps({"filename": req.filename, "data_base64": req.data_base64}).encode("utf-8")
+            preq = urllib.request.Request(proxy_url, data=req_data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(preq, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("status") == "success":
+                    md_text = data.get("markdown") or data.get("text") or ""
+                    title = os.path.splitext(req.filename)[0]
+                    return {
+                        "status": "success",
+                        "filename": req.filename,
+                        "title": title,
+                        "markdown": md_text,
+                        "charCount": len(md_text),
+                        "lineCount": len(md_text.splitlines())
+                    }
+        except Exception:
+            pass
+
+        # 2. 純文字 / 代碼直讀 fallback
+        ext = os.path.splitext(req.filename)[1].lower()
+        if ext in (".txt", ".md", ".json", ".csv", ".tsv", ".py", ".js", ".html", ".htm", ".xml", ".yaml", ".yml"):
+            try:
+                raw_b64 = req.data_base64
+                if "base64," in raw_b64:
+                    raw_b64 = raw_b64.split("base64,", 1)[1]
+                file_bytes = base64.b64decode(raw_b64)
+                raw_text = file_bytes.decode("utf-8", errors="replace")
+                title = os.path.splitext(req.filename)[0]
+                return {
+                    "status": "success",
+                    "filename": req.filename,
+                    "title": title,
+                    "markdown": raw_text,
+                    "charCount": len(raw_text),
+                    "lineCount": len(raw_text.splitlines())
+                }
+            except Exception:
+                pass
+
+        raise HTTPException(
+            status_code=500, 
+            detail=f"本地未安裝 markitdown 套件 ({imp_err})。請執行: pip install markitdown[all] 或啟動 Webcom 常駐程式 (Port 8001)"
+        )
 
     raw_b64 = req.data_base64
     if "base64," in raw_b64:

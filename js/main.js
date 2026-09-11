@@ -803,6 +803,20 @@ function processNextFile() {
         updateListHeader();
         processNextFile();
       } catch (err) {
+        console.warn('Webcom 後端轉檔失敗，嘗試降級至瀏覽器端 Web Worker (Pyodide):', err);
+        if (worker && isEngineReady) {
+          item.status = 'converting';
+          updateFileItem(item);
+          try {
+            worker.postMessage(
+              { type: 'convert', file: buffer, filename: item.filename },
+              [buffer]
+            );
+            return;
+          } catch (wErr) {
+            console.warn('Worker 降級失敗:', wErr);
+          }
+        }
         item.status = 'error';
         item.errorMessage = err.message || 'Webcom 後端轉換失敗';
         updateFileItem(item);
