@@ -21,18 +21,21 @@ const CACHE_NAMES = {
   wheels:  `wheels-${CACHE_VERSION}`,
 };
 
+// 動態取得當前 SW 的 base 路徑
+const swBasePath = self.location.pathname.substring(0, self.location.pathname.lastIndexOf('/') + 1);
+
 // 安裝時預快取的 UI 靜態資源
 const UI_PRECACHE = [
-  '/',
-  `/css/style.css?v=${APP_VERSION}`,
-  `/js/main.js?v=${APP_VERSION}`,
-  '/js/converter.worker.js',
-  `/js/lib/jszip.min.js?v=${APP_VERSION}`,
-  `/images/favicon.svg?v=${APP_VERSION}`,
-  `/images/icon-192.png?v=${APP_VERSION}`,
-  `/images/icon-512.png?v=${APP_VERSION}`,
-  `/images/icon-180.png?v=${APP_VERSION}`,
-  '/manifest.json',
+  swBasePath,
+  `${swBasePath}css/style.css?v=${APP_VERSION}`,
+  `${swBasePath}js/main.js?v=${APP_VERSION}`,
+  `${swBasePath}js/converter.worker.js`,
+  `${swBasePath}js/lib/jszip.min.js?v=${APP_VERSION}`,
+  `${swBasePath}images/favicon.svg?v=${APP_VERSION}`,
+  `${swBasePath}images/icon-192.png?v=${APP_VERSION}`,
+  `${swBasePath}images/icon-512.png?v=${APP_VERSION}`,
+  `${swBasePath}images/icon-180.png?v=${APP_VERSION}`,
+  `${swBasePath}manifest.json`,
 ];
 
 // ── Install ────────────────────────────────────────────────────────────────
@@ -81,16 +84,13 @@ self.addEventListener('fetch', (event) => {
   const path = url.pathname;
 
   // API 請求：不快取，直接放行
-  if (path.startsWith('/api/')) return;
+  if (path.includes('/api/') || path.includes('/health')) return;
 
-  if (path.startsWith('/pyodide/')) {
+  if (path.includes('/pyodide/')) {
     event.respondWith(cacheFirst(request, CACHE_NAMES.pyodide));
-  } else if (path.endsWith('/manifest.json') && path.startsWith('/wheels/')) {
-    // manifest.json 隨部署更新，使用 stale-while-revalidate。
-    // 前端以時間戳破壞 HTTP 快取（?_t=…），但 SW 快取用不帶查詢參數的
-    // URL 作為 key，確保離線時仍能命中快取。
+  } else if (path.endsWith('/manifest.json') && path.includes('/wheels/')) {
     event.respondWith(staleWhileRevalidateStripQuery(request, CACHE_NAMES.ui));
-  } else if (path.startsWith('/wheels/')) {
+  } else if (path.includes('/wheels/')) {
     event.respondWith(cacheFirst(request, CACHE_NAMES.wheels));
   } else {
     event.respondWith(staleWhileRevalidate(request, CACHE_NAMES.ui));

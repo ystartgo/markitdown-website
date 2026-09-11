@@ -59,8 +59,78 @@ let fileQueue    = [];   // FileItem[]
 let currentIndex = -1;  // 目前正在轉換的索引
 let currentFetchController = null; // URL 抓取的 AbortController
 
+let useServerEngine = false;
+let backendApiBase = '';
+const currentPath = window.location.pathname;
+const basePath = currentPath.endsWith('/') 
+  ? currentPath 
+  : currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
+
+// ── Webcom 後端伺服器檢測與原生轉換 ──────────────────────────────────────────
+async function checkBackendHealth() {
+  const candidateEndpoints = [
+    '/health',
+    'http://127.0.0.1:8001/health',
+    'http://127.0.0.1:8002/health'
+  ];
+  for (const ep of candidateEndpoints) {
+    try {
+      const res = await fetch(ep);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && (data.service || data.status === 'online')) {
+          backendApiBase = ep.replace('/health', '');
+          console.log('[Webcom] 後端服務連線成功:', ep, data);
+          useServerEngine = true;
+          isEngineReady = true;
+          setEngineStatus('ready', 'Webcom 原生核心 (就緒)');
+          dropZone.classList.remove('drop-zone--disabled');
+          urlInput.disabled = false;
+          const statusEl = document.getElementById('upload-engine-status');
+          if (statusEl) statusEl.hidden = true;
+          return true;
+        }
+      }
+    } catch (e) {}
+  }
+  return false;
+}
+
+// 頁面載入時即時檢查 Webcom 後端
+checkBackendHealth();
+
+async function convertWithServer(buffer, filename) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, len)));
+  }
+  const b64 = btoa(binary);
+  const convertUrl = (backendApiBase || '') + '/api/convert';
+  const resp = await fetch(convertUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename, data_base64: b64 })
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: '轉換失敗' }));
+    throw new Error(err.detail || '轉換失敗');
+  }
+  const data = await resp.json();
+  return data.markdown || '';
+}
+
 function createWorker() {
-  worker = new Worker('/js/converter.worker.js');
+  try {
+    worker = new Worker(basePath + 'js/converter.worker.js');
+  } catch (e) {
+    console.warn('Worker 建立失敗，啟用 Webcom 後端模式:', e);
+    useServerEngine = true;
+    checkBackendHealth();
+    return;
+  }
 
   worker.onmessage = (event) => {
     const { type, message, markdown, percent } = event.data;
@@ -68,7 +138,8 @@ function createWorker() {
     switch (type) {
       case 'ready':
         isEngineReady = true;
-        setEngineStatus('ready', '就緒');
+        useServerEngine = false; // Pyodide WASM 已就緒，以客戶端為主
+        setEngineStatus('ready', '雙引擎就緒 (WASM / 原生)');
         // 等進度條 100% 的 transition（0.5s）播完後，同步顯示文件框並隱藏進度條
         setTimeout(() => {
           dropZone.classList.remove('drop-zone--disabled');
@@ -106,10 +177,22 @@ function createWorker() {
 
       case 'error': {
         if (!isEngineReady) {
-          // 初始化階段的錯誤：顯示全域錯誤訊息
-          showError(message || '未知錯誤', '初始化失敗');
-          setEngineStatus('error', '引擎錯誤');
-          document.getElementById('upload-engine-status').hidden = true;
+          // 若 Pyodide 尚未下載套件，檢查是否有 Webcom 後端可用
+          checkBackendHealth().then(hasBackend => {
+            if (hasBackend) {
+              useServerEngine = true;
+              isEngineReady = true;
+              setEngineStatus('ready', 'Webcom 原生核心 (就緒)');
+              dropZone.classList.remove('drop-zone--disabled');
+              urlInput.disabled = false;
+              const statusEl = document.getElementById('upload-engine-status');
+              if (statusEl) statusEl.hidden = true;
+            } else {
+              showError(message || '未知錯誤', '初始化失敗');
+              setEngineStatus('error', '引擎錯誤');
+              document.getElementById('upload-engine-status').hidden = true;
+            }
+          });
         } else {
           // 轉換階段的錯誤：更新對應檔案項目
           const item = fileQueue[currentIndex];
@@ -127,10 +210,22 @@ function createWorker() {
   };
 
   worker.onerror = (err) => {
-    showError(`Worker 發生錯誤：${err.message}`, '初始化失敗');
-    setEngineStatus('error', '引擎錯誤');
-    document.getElementById('upload-engine-status').hidden = true;
-    showState(STATES.UPLOAD);
+    checkBackendHealth().then(hasBackend => {
+      if (hasBackend) {
+        useServerEngine = true;
+        isEngineReady = true;
+        setEngineStatus('ready', 'Webcom 原生核心 (就緒)');
+        dropZone.classList.remove('drop-zone--disabled');
+        urlInput.disabled = false;
+        const statusEl = document.getElementById('upload-engine-status');
+        if (statusEl) statusEl.hidden = true;
+      } else {
+        showError(`Worker 發生錯誤：${err.message}`, '初始化失敗');
+        setEngineStatus('error', '引擎錯誤');
+        document.getElementById('upload-engine-status').hidden = true;
+        showState(STATES.UPLOAD);
+      }
+    });
   };
 }
 
@@ -139,6 +234,7 @@ function setEngineStatus(state, text) {
   engineStatus.className = `engine-status engine-status--${state}`;
   engineStatusText.textContent = text;
 }
+
 
 /** 安全解碼 URI，失敗時回傳原始字串 */
 function safeDecodeURI(str) {
@@ -350,7 +446,7 @@ async function fetchAndConvertMultiple(urlEntries) {
       let response;
       try {
         response = await fetch(
-          `/api/fetch-url?url=${encodeURIComponent(item.filename)}`,
+          `${backendApiBase || ''}/api/fetch-url?url=${encodeURIComponent(item.filename)}`,
           { signal: itemController.signal }
         );
       } catch (err) {
@@ -693,6 +789,48 @@ function processNextFile() {
   if (!item._startTime) item._startTime = Date.now();
   updateFileItem(item);
 
+  // 若使用 Webcom 後端原生引擎
+  if (useServerEngine || !worker) {
+    const handleServerConvert = async (buffer) => {
+      try {
+        const md = await convertWithServer(buffer, item.filename);
+        item.status = 'done';
+        item.markdown = md;
+        item.charCount = md.length;
+        item.lineCount = md.split('\n').length;
+        item.duration = Date.now() - item._startTime;
+        updateFileItem(item);
+        updateListHeader();
+        processNextFile();
+      } catch (err) {
+        item.status = 'error';
+        item.errorMessage = err.message || 'Webcom 後端轉換失敗';
+        updateFileItem(item);
+        updateListHeader();
+        processNextFile();
+      }
+    };
+
+    if (item.arrayBuffer) {
+      const buffer = item.arrayBuffer;
+      item.arrayBuffer = null;
+      handleServerConvert(buffer);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => handleServerConvert(e.target.result);
+    reader.onerror = () => {
+      item.status = 'error';
+      item.errorMessage = '無法讀取檔案';
+      updateFileItem(item);
+      updateListHeader();
+      processNextFile();
+    };
+    reader.readAsArrayBuffer(item.file);
+    return;
+  }
+
   // URL 抓取的虛擬 FileItem 已有 arrayBuffer，直接送入 Worker
   if (item.arrayBuffer) {
     const buffer = item.arrayBuffer;
@@ -881,7 +1019,7 @@ const offlineBanner = document.getElementById('offline-banner');
  */
 async function checkConnectivity() {
   try {
-    await fetch(`/sw.js?_sw_bypass=1&_t=${Date.now()}`, {
+    await fetch(`${basePath}sw.js?_sw_bypass=1&_t=${Date.now()}`, {
       method: 'HEAD',
       cache: 'no-store',
     });

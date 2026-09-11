@@ -1,12 +1,12 @@
 # MarkItDown Website
 
-[![GitHub](https://img.shields.io/badge/GitHub-GoneTone%2Fmarkitdown--website-181717?logo=github)](https://github.com/GoneTone/markitdown-website)
+[![GitHub](https://img.shields.io/badge/GitHub-ystartgo%2Fmarkitdown--website-181717?logo=github)](https://github.com/ystartgo/markitdown-website)
+[![Upstream](https://img.shields.io/badge/Upstream-GoneTone%2Fmarkitdown--website-blue?logo=github)](https://github.com/GoneTone/markitdown-website)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-gonetone%2Fmarkitdown--website-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/gonetone/markitdown-website)
 
 在瀏覽器中將文件轉換為 Markdown。**檔案轉換完全在本機端進行，不會上傳任何資料至伺服器**；網址轉換時，網頁內容會經由伺服器代理取得。
 
-本專案以 MIT License 開源於 [GitHub](https://github.com/GoneTone/markitdown-website)，歡迎提交 Issue 或 Pull Request。
+本專案 Fork 自 [GoneTone/markitdown-website](https://github.com/GoneTone/markitdown-website)，增強了 **Webcom 便攜整合**、**純 Python 輕量化服務端**、**相對路徑/子目錄部署相容** 與 **後端原生 MarkItDown 秒級轉檔降級機制**。以 MIT License 開源於 [GitHub (ystartgo)](https://github.com/ystartgo/markitdown-website)。
 
 由 [Microsoft MarkItDown](https://github.com/microsoft/markitdown) 提供轉換核心，透過 [Pyodide](https://pyodide.org/)（Python WebAssembly）在瀏覽器中直接執行 Python。
 
@@ -57,7 +57,26 @@ services:
 
 ### 本地開發
 
-**環境需求：** Python 3.10+、Docker
+**環境需求：** Python 3.10+、Docker（可選）
+
+#### 方式 A：免 Docker / 純 Python 輕量化服務（推薦 Windows / Webcom 使用者）
+
+專案內建輕量化 FastAPI 服務端 (`server.py`)，自動補齊 COOP/COEP 標頭、提供 URL SSRF 代理與後端原生秒級轉檔降級：
+
+```bash
+# 1. (可選) 下載 Pyodide WASM runtime 與純 Python wheels (約 400MB)
+download_wheels.bat
+# 或執行: python scripts/download_wheels.py
+
+# 2. 啟動服務 (自動尋找 Webcom Python 或系統 Python，監聽 8002 埠)
+start_markitdown.bat
+# 或前台除錯執行: python server.py
+
+# 3. 停止服務
+stop_markitdown.bat
+```
+
+#### 方式 B：使用 Docker 開發環境
 
 ```bash
 # 1. 下載 Pyodide runtime 及 wheel 套件（僅需執行一次，約 400MB）
@@ -140,8 +159,12 @@ markitdown-website/
 ├── css/
 │   └── style.css                 樣式表
 ├── js/
-│   ├── main.js                   UI 邏輯
-│   └── converter.worker.js       轉換 Web Worker
+│   ├── main.js                   UI 邏輯（含後端秒級降級與動態子路徑偵測）
+│   └── converter.worker.js       轉換 Web Worker（Pyodide WASM）
+├── server.py                     輕量化 Python/FastAPI 服務（免 Docker / 支援原生秒級轉檔）
+├── start_markitdown.bat          一鍵啟動輕量服務並開啟瀏覽器
+├── stop_markitdown.bat           一鍵停止輕量服務
+├── download_wheels.bat           一鍵下載離線 Pyodide 與 Wheels
 ├── server/
 │   ├── index.js                  Node.js Express 入口（Browser 生命週期）
 │   ├── fetch-url.js              URL 抓取路由（Puppeteer + SSRF 防護）

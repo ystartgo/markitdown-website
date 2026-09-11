@@ -95,18 +95,63 @@ def download_extra_wheels():
     tmp_dir = WHEELS_DIR / "_tmp"
     tmp_dir.mkdir(exist_ok=True)
 
-    # 使用 pip download 下載套件（僅下載 wheel 格式）
-    cmd = [
-        sys.executable, "-m", "pip", "download",
-        "--dest", str(tmp_dir),
-        "--only-binary=:all:",
-        "--quiet",
-        *EXTRA_PACKAGES,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"錯誤：pip download 失敗：\n{result.stderr}")
-        sys.exit(1)
+    # 尋找可用的 pip 指令（支援 Webcom 可攜式環境或系統 pip）
+    pip_cmd = None
+    try:
+        res = subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True)
+        if res.returncode == 0:
+            pip_cmd = [sys.executable, "-m", "pip"]
+    except Exception:
+        pass
+
+    if not pip_cmd:
+        for p in ["pip", "pip3", "python", "py"]:
+            w = shutil.which(p)
+            if w:
+                try:
+                    args = [w, "--version"] if "pip" in p else [w, "-m", "pip", "--version"]
+                    res = subprocess.run(args, capture_output=True)
+                    if res.returncode == 0:
+                        pip_cmd = [w] if "pip" in p else [w, "-m", "pip"]
+                        break
+                except Exception:
+                    pass
+
+    if pip_cmd:
+        cmd = [
+            *pip_cmd, "download",
+            "--dest", str(tmp_dir),
+            "--only-binary=:all:",
+            "--quiet",
+            *EXTRA_PACKAGES,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            log(f"警告：pip download 失敗，將嘗試透過 PyPI API 直接下載：\n{result.stderr}")
+            pip_cmd = None
+
+    # 若無 pip 或 pip 失敗，透過 PyPI JSON API 直接下載純 Python wheel
+    if not pip_cmd:
+        log("使用 PyPI API 直接解析並下載純 Python wheel...")
+        import urllib.request, json
+        pkg_names = ["markitdown", "html2text", "ebooklib", "markdownify", "mammoth", "pdfminer.six", "openpyxl", "python-pptx", "python-docx"]
+        for pkg in pkg_names:
+            try:
+                url = f"https://pypi.org/pypi/{pkg}/json"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    pypi_data = json.loads(resp.read().decode("utf-8"))
+                    for file_info in pypi_data.get("urls", []):
+                        whl_url = file_info.get("url", "")
+                        filename = file_info.get("filename", "")
+                        if filename.endswith("none-any.whl"):
+                            dest = tmp_dir / filename
+                            if not dest.exists():
+                                download_file(whl_url, dest)
+                            break
+            except Exception as e:
+                log(f"下載 {pkg} 失敗: {e}")
+
 
     # 只保留純 Python wheel（檔名包含 "none-any"，代表無平台相依性）
     kept = []

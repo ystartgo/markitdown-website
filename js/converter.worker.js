@@ -10,7 +10,12 @@
  *   傳送 { type: 'error', message: string }         → 轉換失敗
  */
 
-importScripts('/pyodide/pyodide.js');
+const workerBasePath = self.location.pathname.substring(0, self.location.pathname.lastIndexOf('/js/')) + '/';
+try {
+  importScripts(workerBasePath + 'pyodide/pyodide.js');
+} catch (e) {
+  try { importScripts('/pyodide/pyodide.js'); } catch (e2) {}
+}
 
 let pyodide = null;
 let isReady = false;
@@ -25,7 +30,7 @@ async function initialize() {
   try {
     sendProgress('正在載入 Python 執行環境...', 5);
     pyodide = await loadPyodide({
-      indexURL: '/pyodide/',
+      indexURL: workerBasePath + 'pyodide/',
     });
 
     sendProgress('正在載入內建套件...', 40);
@@ -38,7 +43,7 @@ async function initialize() {
     await pyodide.loadPackage(['micropip', 'charset-normalizer', 'pandas', 'lxml', 'pillow', 'cryptography']);
 
     sendProgress('正在讀取套件清單...', 62);
-    const response = await fetch(`/wheels/manifest.json?_t=${Date.now()}`);
+    const response = await fetch(`${workerBasePath}wheels/manifest.json?_t=${Date.now()}`);
     if (!response.ok) {
       throw new Error(`無法讀取套件清單：${response.status} ${response.statusText}`);
     }
@@ -50,7 +55,7 @@ async function initialize() {
 
     sendProgress(`正在驗證 ${manifest.length} 個套件...`, 65);
     // 預先驗證所有 wheel 檔案是否可用，避免 micropip.install() 遇到 404 靜默掛住
-    const wheelUrls = manifest.map(f => `/wheels/${f}`);
+    const wheelUrls = manifest.map(f => `${workerBasePath}wheels/${f}`);
     const checks = await Promise.all(
       wheelUrls.map(url => fetch(url, { method: 'HEAD' })
         .then(r => ({ url, ok: r.ok, status: r.status }))
